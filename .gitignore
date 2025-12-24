@@ -18,3 +18,24 @@ frontend/.env
 *.sqlite3
 pass.db
 .DS_Store
+
+
+# Data + ML artifacts
+backend/data/
+backend/models/*.joblib
+
+# VS Code
+.vscode/
+
+# Python tooling caches
+.pytest_cache/
+.mypy_cache/
+*.log
+
+# More ML artifacts (optional but useful)
+backend/models/*.pkl
+backend/models/*.pt
+backend/models/*.h5
+backend/models/*.onnx
+
+backend/reports/
