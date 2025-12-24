@@ -30,6 +30,7 @@ def _load_bundle():
     try:
         return joblib.load(BUNDLE_PATH)
     except Exception:
+        # Keep service resilient: if bundle can't be loaded, fallback keeps app working
         return None
 
 
@@ -40,7 +41,7 @@ def _demo_feature_row_for_student(student_id: int, feature_cols: list[str], cat_
     """
     rng = np.random.default_rng(student_id)
 
-    row = {}
+    row: dict = {}
     for f in feature_cols:
         if f in cat_cols:
             row[f] = f"cat_{student_id % 5}"  # deterministic category-like strings
@@ -67,7 +68,7 @@ def _ensure_df_schema(df: pd.DataFrame, feature_cols: list[str], cat_cols: set[s
     # keep only in correct order
     X = X[feature_cols]
 
-    # enforce categorical dtype
+    # enforce categorical dtype + clean strings
     for c in feature_cols:
         if c in cat_cols:
             X[c] = X[c].astype(str).str.strip().astype("category")
@@ -78,6 +79,28 @@ def _ensure_df_schema(df: pd.DataFrame, feature_cols: list[str], cat_cols: set[s
             X[c] = pd.to_numeric(X[c], errors="coerce").fillna(0.0)
 
     return X
+
+
+def _preload_latest_risk_scores(student_ids: list[int]) -> dict[int, RiskScore]:
+    """
+    Avoid N+1 queries:
+    - fetch all risk scores for these students once
+    - pick the latest per student by generated_at
+    """
+    if not student_ids:
+        return {}
+
+    rows = (
+        RiskScore.query.filter(RiskScore.student_id.in_(student_ids))
+        .order_by(RiskScore.student_id.asc(), RiskScore.generated_at.desc())
+        .all()
+    )
+
+    latest: dict[int, RiskScore] = {}
+    for rs in rows:
+        if rs.student_id not in latest:
+            latest[rs.student_id] = rs
+    return latest
 
 
 def run_batch_risk_prediction(student_ids: list[int] | None = None) -> int:
@@ -94,45 +117,42 @@ def run_batch_risk_prediction(student_ids: list[int] | None = None) -> int:
     model = bundle["model"]
     feature_cols: list[str] = bundle["feature_columns"]
     cat_cols = set(bundle.get("categorical_features", []))
-    threshold = float(bundle.get("threshold", 0.5))
 
     q = Student.query
     if student_ids:
         q = q.filter(Student.id.in_(student_ids))
     students = q.all()
+    if not students:
+        return 0
+
+    student_id_list = [s.id for s in students]
+    existing_by_student = _preload_latest_risk_scores(student_id_list)
 
     # Build demo feature rows (replace later with real DB feature engineering)
     rows = [_demo_feature_row_for_student(s.id, feature_cols, cat_cols) for s in students]
     X = _ensure_df_schema(pd.DataFrame(rows), feature_cols, cat_cols)
 
     probs = model.predict_proba(X)[:, 1]
-    _preds = (probs >= threshold).astype(int)  # not stored currently, but kept if you want later
+    # If later you store a binary prediction, you can use:
+    # preds = (probs >= threshold).astype(int)
 
     # Global feature importance (simple MVP XAI)
     importances = getattr(model, "feature_importances_", None)
     top_json = None
     if importances is not None:
         top_idx = np.argsort(importances)[::-1][:6]
-        top_factors = [
-            {"feature": feature_cols[i], "importance": float(importances[i])}
-            for i in top_idx
-        ]
+        top_factors = [{"feature": feature_cols[i], "importance": float(importances[i])} for i in top_idx]
         top_json = json.dumps(top_factors)
 
     created_or_updated = 0
 
     for s, p in zip(students, probs, strict=False):
-        # Use generated_at for "latest" (more semantically correct than id)
-        existing = (
-            RiskScore.query.filter_by(student_id=s.id)
-            .order_by(RiskScore.generated_at.desc())
-            .first()
-        )
+        existing = existing_by_student.get(s.id)
 
         if existing:
             existing.risk_probability = float(p)
             existing.top_factors_json = top_json
-            existing.generated_at = datetime.utcnow()  # ✅ refresh timestamp on update
+            existing.generated_at = datetime.utcnow()  # keep consistent with model default
         else:
             rs = RiskScore(
                 student_id=s.id,
@@ -140,6 +160,7 @@ def run_batch_risk_prediction(student_ids: list[int] | None = None) -> int:
                 top_factors_json=top_json,
             )
             db.session.add(rs)
+            existing_by_student[s.id] = rs  # keep dict consistent within this run
 
         created_or_updated += 1
 
@@ -156,8 +177,11 @@ def _fallback_batch(student_ids: list[int] | None) -> int:
     if student_ids:
         q = q.filter(Student.id.in_(student_ids))
     students = q.all()
+    if not students:
+        return 0
 
-    created_or_updated = 0
+    student_id_list = [s.id for s in students]
+    existing_by_student = _preload_latest_risk_scores(student_id_list)
 
     top = json.dumps(
         [
@@ -167,19 +191,16 @@ def _fallback_batch(student_ids: list[int] | None) -> int:
         ]
     )
 
+    created_or_updated = 0
+
     for s in students:
         p = (s.id * 37 % 100) / 100.0
-
-        existing = (
-            RiskScore.query.filter_by(student_id=s.id)
-            .order_by(RiskScore.generated_at.desc())
-            .first()
-        )
+        existing = existing_by_student.get(s.id)
 
         if existing:
             existing.risk_probability = float(p)
             existing.top_factors_json = top
-            existing.generated_at = datetime.utcnow()  # ✅ refresh timestamp on update
+            existing.generated_at = datetime.utcnow()
         else:
             rs = RiskScore(
                 student_id=s.id,
@@ -187,6 +208,7 @@ def _fallback_batch(student_ids: list[int] | None) -> int:
                 top_factors_json=top,
             )
             db.session.add(rs)
+            existing_by_student[s.id] = rs
 
         created_or_updated += 1
 
