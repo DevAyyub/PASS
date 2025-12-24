@@ -37,3 +37,5 @@ backend/models/*.pkl
 backend/models/*.pt
 backend/models/*.h5
 backend/models/*.onnx
+
+backend/reports/
