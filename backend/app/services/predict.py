@@ -117,7 +117,6 @@ def run_batch_risk_prediction(student_ids: list[int] | None = None) -> int:
     model = bundle["model"]
     feature_cols: list[str] = bundle["feature_columns"]
     cat_cols = set(bundle.get("categorical_features", []))
-    threshold = float(bundle.get("threshold", 0.5))  # kept for future use if you store class labels later
 
     q = Student.query
     if student_ids:
