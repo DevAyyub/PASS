@@ -62,14 +62,14 @@ def main() -> int:
     data_path = Path(args.data)
 
     if not model_path.is_file():
-        print(f"❌ Model bundle not found: {model_path}")
+        print(f"Model bundle not found: {model_path}")
         print("Train first, e.g.: python scripts/train_lightgbm.py --data data/UCI_data.csv --outdir models")
         return 1
 
     try:
         bundle = joblib.load(model_path)
     except Exception as exc:
-        print(f"❌ Failed to load model bundle '{model_path}': {exc}")
+        print(f"Failed to load model bundle '{model_path}': {exc}")
         return 1
 
     model = bundle["model"]
@@ -79,7 +79,7 @@ def main() -> int:
     try:
         df = read_csv_auto(data_path)
     except Exception as exc:
-        print(f"❌ {exc}")
+        print(f"{exc}")
         return 1
 
     df.columns = [str(c) for c in df.columns]
@@ -102,7 +102,7 @@ def main() -> int:
             aligned[want] = "unknown" if want in cat_cols else 0.0
 
     if missing:
-        print("⚠️ Missing columns filled with defaults (first 10):", missing[:10])
+        print("Missing columns filled with defaults (first 10):", missing[:10])
         print("Total missing filled:", len(missing))
 
     # enforce categorical dtype and numeric coercion
@@ -114,7 +114,7 @@ def main() -> int:
 
     row = aligned.head(1)
     proba = model.predict_proba(row)[:, 1][0]
-    print("✅ Predicted dropout risk probability:", float(proba))
+    print("Predicted dropout risk probability:", float(proba))
     return 0
 
 
