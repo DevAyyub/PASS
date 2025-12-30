@@ -1,14 +1,12 @@
 from flask import Blueprint, request
-from flask_jwt_extended import (
-    create_access_token, jwt_required, get_jwt_identity, get_jwt
-)
+from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity, get_jwt
 from ..models import User
 
 bp = Blueprint("auth", __name__)
 
 @bp.post("/login")
 def login():
-    data = request.get_json(force=True)
+    data = request.get_json(force=True) or {}
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
 
@@ -20,7 +18,7 @@ def login():
         identity=str(user.id),
         additional_claims={"role": user.role}
     )
-    return {"access_token": access_token, "role": user.role}
+    return {"access_token": access_token, "role": user.role}, 200
 
 
 @bp.get("/me")
@@ -36,12 +34,12 @@ def me():
 
     payload = {"id": user.id, "email": user.email, "role": role}
 
-    if role == "student" and user.student:
+    if role == "student" and getattr(user, "student", None):
         payload["student_id"] = user.student.id
         payload["name"] = user.student.name
 
-    if role == "advisor" and user.advisor:
+    if role == "advisor" and getattr(user, "advisor", None):
         payload["advisor_id"] = user.advisor.id
         payload["name"] = user.advisor.name
 
-    return payload
+    return payload, 200
