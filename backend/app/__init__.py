@@ -16,7 +16,11 @@ def create_app():
     app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL", "sqlite:///pass.db")
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-    cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+    cors_origins = [
+        o.strip()
+        for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+        if o.strip()
+    ]
     CORS(app, resources={r"/api/*": {"origins": cors_origins}}, supports_credentials=True)
 
     db.init_app(app)
